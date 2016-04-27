@@ -26,7 +26,7 @@ clausify inps = run $ clausifyInputs nil nil inps
   
   clausifyInputs theory obligs inps@(inp:_) | kind inp == NegatedConjecture =
     do css <- sequence [ clausForm (tag inp) (what inp) | inp <- negs ]
-       clausifyInputs theory (obligs +++ fromList css) nonNegs
+       clausifyInputs theory (obligs +++ fromList [concat css]) nonNegs
    where
     (negs,nonNegs) = partition (\inp -> kind inp == NegatedConjecture) inps
 
