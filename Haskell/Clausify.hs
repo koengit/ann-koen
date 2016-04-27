@@ -1,3 +1,4 @@
+{-# LANGUAGE ImplicitParams #-}
 module Clausify
   ( clausify
   )
@@ -7,7 +8,7 @@ import Form
 import qualified Form
 import Name
 import Data.Set( Set )
-import Data.List( nub, maximumBy, sortBy )
+import Data.List( nub, maximumBy, sortBy, partition )
 import Data.Ord
 import qualified Data.Set as S
 import Flags
@@ -23,7 +24,12 @@ clausify inps = run $ clausifyInputs nil nil inps
               , map (map clean) (toList obligs)
               )
   
-  -- Here, one could imagine adding NegatedConjecture as ONE oblig also ...
+  clausifyInputs theory obligs inps@(inp:_) | kind inp == NegatedConjecture =
+    do css <- sequence [ clausForm (tag inp) (what inp) | inp <- negs ]
+       clausifyInputs theory (obligs +++ fromList css) nonNegs
+   where
+    (negs,nonNegs) = partition (\inp -> kind inp == NegatedConjecture) inps
+
   clausifyInputs theory obligs (inp:inps) | kind inp /= Conjecture =
     do cs <- clausForm (tag inp) (what inp)
        clausifyInputs (theory +++ fromList cs) obligs inps
