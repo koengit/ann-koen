@@ -30,97 +30,62 @@ import Debug.Trace
 
 classifyProblem :: (?flags :: Flags) => [Clause] -> [Clause] -> IO ClauseAnswer
 classifyProblem theory oblig = let cs = theory ++ oblig in do
-
-	createDirectoryIfMissing False (F.temp ?flags)
-
-	let
-		tempdir 					= (F.temp ?flags) ++ "/" ++ (subdir (F.thisFile ?flags))
-		--zoomfile					= zoomf (F.thisFile ?flags)
-		verbose						=  F.verbose ?flags > 0	
-		methods						=  F.method ?flags	
-		eflag						  =  F.elimit ?flags
-		pflag 						=  F.subset ?flags
-		forms 						= map toForm cs
-		noClash 					= noClashString forms
-		axiomfile					= tempdir ++ "axiomfile"
-		termdepth					= F.termdepth ?flags
-		funflag						= F.function ?flags
-		relflag						= F.relation ?flags
-		leoflag						= F.leo ?flags
-		proverflag				= F.prover ?flags
+  createDirectoryIfMissing False (F.temp ?flags)
+  let
+    tempdir     = (F.temp ?flags) ++ "/" ++ (subdir (F.thisFile ?flags))
+    verbose     =  F.verbose ?flags > 0	
+    methods     =  F.method ?flags	
+    eflag       =  F.elimit ?flags
+    pflag       =  F.subset ?flags
+    forms       = map toForm cs
+    noClash     = noClashString forms
+    axiomfile   = tempdir ++ "axiomfile"
+    termdepth   = F.termdepth ?flags
+    funflag     = F.function ?flags
+    relflag     = F.relation ?flags
+    leoflag     = F.leo ?flags
+    proverflag  = F.prover ?flags
     
-	createDirectoryIfMissing False tempdir
-	starttime   	<- getClockTime
-	
-	fs  		<- if (F.zoom ?flags) then do											
-								if verbose then putStrLn "Zooming..." else return ()  
-								zoom tempdir forms noClash (F.plimit ?flags)
-								
-							else return forms --the formulas in which to search for candidates	
+  createDirectoryIfMissing False tempdir
+  starttime   	<- getClockTime
+  fs  		<- if (F.zoom ?flags) then do											
+                     if verbose then putStrLn "Zooming..." else return ()  
+                     zoom tempdir forms noClash (F.plimit ?flags)
+                    else return forms --the formulas in which to search for candidates	
 							
-	time2 <- getClockTime
-	let time3 = tdSec $ diffClockTimes time2 starttime
-	let
-		sig 			= getSignature fs (F.function ?flags)
-		axioms 		= form2axioms forms noClash
-		settings 	= MSet axiomfile tempdir fs sig noClash verbose 
-									funflag relflag pflag termdepth eflag proverflag
-	h <- openFile axiomfile WriteMode			
-	hSetBuffering h NoBuffering
-	hPutStr h axioms	
-	hClose h
-	result <- runWithSettings settings $ classifyWithMethods methods 
-	finish starttime result tempdir (F.thisFile ?flags) (F.outfile ?flags)
-
-{-
-	saveZoomed fs (zoomfile++(show time3)) noClash
-	return (if length fs == 1 then (NoAnswerClause GaveUp) else (NoAnswerClause GaveUp))
-	
-zoomf inputfile = (filter ( (not . (flip elem) ['/','.','-',' '])) inputfile) ++ "_Zoomed" 
-
-saveZoomed fs file noClash = do 
-    h <- openFile file WriteMode
-    hPutStr h $ (form2axioms fs noClash)
-    hClose h	
-	
-	-}									
-{-
-
-	let
-		sig 			= getSignature fs (F.function ?flags)
-		axioms 		= form2axioms forms noClash
-		settings 	= MSet axiomfile tempdir fs sig noClash verbose 
-									funflag relflag pflag termdepth eflag proverflag
-	h <- openFile axiomfile WriteMode			
-	hSetBuffering h NoBuffering
-	hPutStr h axioms	
-	hClose h
-	result <- runWithSettings settings $ classifyWithMethods methods 
-	finish starttime result tempdir (F.thisFile ?flags) (F.outfile ?flags)
--}
+  time2 <- getClockTime
+  let time3     = tdSec $ diffClockTimes time2 starttime
+      sig       = getSignature fs (F.function ?flags)
+      axioms    = form2axioms forms noClash
+      settings 	= MSet axiomfile tempdir fs sig noClash verbose funflag relflag pflag termdepth eflag proverflag
+  h <- openFile axiomfile WriteMode			
+  hSetBuffering h NoBuffering
+  hPutStr h axioms	
+  hClose h
+  result <- runWithSettings settings $ classifyWithMethods methods 
+  finish starttime result tempdir (F.thisFile ?flags) (F.outfile ?flags)
 
 classifyWithMethods :: [Method] -> Settings Result
 classifyWithMethods [] = return None
-classifyWithMethods (m:ms)  = do
-	liftIO $ putStrLn $ show m
-	result <- classifyWithMethod m
-	case result of 
-		None -> classifyWithMethods ms 
-		_		 -> do 	
-				--		Settings $ lift $ putStrLn "hej"
-						return result
-
+classifyWithMethods (m:ms)  = 
+  do
+     liftIO $ putStrLn $ show m
+     result <- classifyWithMethod m
+     case result of 
+	     None -> classifyWithMethods ms 
+	     _		 -> return result
+				
 
 classifyWithMethod :: Method -> Settings Result
 classifyWithMethod m  = do
-	settings <- ask
-	let 
-			funflag' 	= funflag settings
-			d			= depthflag settings
-			fs			= forms settings
-			sig'		= sig settings
-	if m == Serial || m == Sausage then do
-		continueRelations m [] -- we don't want to try function symbols.
+   settings <- ask
+   let 
+     funflag' 	= funflag settings
+     d		= depthflag settings
+     fs	        = forms settings
+     sig'       = sig settings
+   if m == Serial || m == Sausage then do
+     continueRelations m [] -- we don't want to try function symbols.
 		
 		 -- || m == Relation || m == Trans then do
 		--	let		--collect all functions with arity <= 5, 
@@ -130,20 +95,20 @@ classifyWithMethod m  = do
 		--			rels	= concatMap makeRelations funs
 			
 			
-		else if m == InjNotSurj || m == SurjNotInj then do	
-				let
-					funs	=	collectTestTerms sig' funflag' fs d
-				traceM  $ show funs
+      else if m == InjNotSurj || m == SurjNotInj then do	
+        let
+             funs   =  collectTestTerms sig' funflag' fs d
+        traceM  $ show funs
 				
-				let
-					(method,rflag')	=	if m == InjNotSurj then 
-																(conjInjNotOnto, relflag settings) 
-															else (conjNotInjOnto,Nothing) in 
-																continueInjOnto method funs rflag'
-			else case m of
-			--	Auto 			-> continueAuto
-			 --	Leo				-> liftIO $ classifyWithLeo $ axiomfile settings
-				_    			-> undefined -- add new methods here!!
+        let
+             (method,rflag')  =  if m == InjNotSurj then (conjInjNotOnto, relflag settings) 
+                                   else (conjNotInjOnto,Nothing) 
+        
+        continueInjOnto method funs rflag'
+       else case m of
+         -- Auto  -> continueAuto
+         --	Leo -> liftIO $ classifyWithLeo $ axiomfile settings
+         _    			-> undefined -- add new methods here!!
 
 -----------------------------------------------------------------------------------------
 

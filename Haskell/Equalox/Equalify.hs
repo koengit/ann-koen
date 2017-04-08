@@ -4,6 +4,7 @@ module Equalox.Equalify where
 import System.IO
 
 import Equalox.Properties hiding (show')
+import Equalox.Implications
 --import Equalox.MoreProperties
 import Equalox.ToTff
 import Form 
@@ -14,7 +15,7 @@ import Data.Either
 import Name
 import qualified Data.Set as S
 import Data.List
-import Infinox.Conjecture (noClashString,clause2cnf,clauseOrOblig2cnf)
+import Infinox.Conjecture (noClashString,clause2cnf)
 import Debug.Trace
 import Control.Monad.Trans.State.Strict
 import Control.Monad.IO.Class
@@ -22,730 +23,414 @@ import System.FilePath
 import Control.Monad
 import System.Directory
 
-------- Data type definitions -------------------------------------------------
+------- Data type definitions -----------------------------------------------------------
 
 
-hasRelitC :: RelationLit -> Clause ->  Int
-hasRelitC r c  =  length $ (filter ( == True)) ([hasRelit r l | l <- c] )
+data Transformation =
+ Trans {
+      --  name     :: String,
+     trans    ::  Ify,
+     format   :: Format,
+     names    :: [String],
+     propsL   ::  [Property], 
+     propsR   ::  Int -> [Clause], 
+     posR     ::  (Int -> Int -> Term -> Term -> [Clause]), 
+     negR     ::  (Int -> Int -> Term -> Term -> [Clause]), 
+     proofLR  ::   Maybe  Clause, 
+     proofRL  ::   Maybe  Clause
+ }
  
-
-hasRelit :: RelationLit -> Signed Atom ->   Bool
-hasRelit r (Pos ((Fun r2 _) :=: _)) = 
-  if rsymbol r /= r2 then False else fromJust $ rsign r
-  
-hasRelit r (Neg ((Fun r2 _) :=: _)) = 
-  if rsymbol r /= r2 then False else rsign r == Just False
-  
-hasRelit _ _ = False
-  
-negateIfContainsR :: RelationLit -> Signed Atom -> Signed Atom
-negateIfContainsR r sa = case the sa of
-	((Fun r2 _) :=: _) -> if rsymbol r == r2 then negat sa else sa
-	_          -> sa
-
-
-
-data RelationTransformation = 
-  Equivalence {relit :: RelationLit, newsymbol :: Symbol} | 
-  PartialEquivalence {relit :: RelationLit, partial_pred :: Symbol, newsymbol :: Symbol} | 
-  TransRef {relit :: RelationLit, newsymbol :: Symbol, newvar :: String} |
-  TotalOrder {relit :: RelationLit, newsymbol ::  Symbol, ordersymbol :: Symbol} 
- -- StrictTotalOrder {relit :: RelationLit, newsymbol :: Symbol}
-  deriving (Eq,Show)
-  
-data PropertyMap =  
-  PMap {eqrels            :: [RelationLit],
-        peqrels           :: [RelationLit],
-	transrels         :: [RelationLit],
-	totalorders       :: [RelationLit],
-	stricttotalorders :: [RelationLit],
-	allproperties     :: [(RelationLit,[Property])]
-	}
-
 data ClauseOrComment = Comment String | Cl Clause
-	deriving (Eq)
-	
+   deriving (Eq)
+   
+data Format = TFF | CNF
+  deriving (Eq,Show)
+
 instance Show ClauseOrComment where
-	show (Comment s) = "%% " ++ s
-	show (Cl c)      = showClause c
-	
+   show (Comment s) = "%% " ++ s
+   show (Cl c)      = showClause c
+
 type ClausesOrComments = [ClauseOrComment]
 
-clausesOrComments2format :: Ify -> ClausesOrComments -> Int -> Bool -> [String]
-clausesOrComments2format _ [] _ _ =  []
-clausesOrComments2format f ((Cl c):cs) n b = -- trace ((show b) ++ "  " ++ show f) $ 
-   (if f == Ordify then clause2tff else clauseOrOblig2cnf)  c n b : clausesOrComments2format f cs (n+1) b
-clausesOrComments2format f (c:cs) n  b = (show c) : (clausesOrComments2format f cs n b)
+data WorkingTheory = 
+  WTheory {axioms   :: ClausesOrComments, 
+           hyps     :: ClausesOrComments, 
+           negconjs :: ClausesOrComments}
+
+-- data RelationLit = Rel {rsymbol :: Symbol, rsign :: (Maybe Bool), dir :: (Maybe Bool)}  
+-- defined in Properties.hs 
+ 
+ --- ***************************** TRANSFORMATIONS ********************************** ---
+
+equalification :: String ->  Transformation
+equalification noClash = 
+    Trans {
+      trans   = Equalify,
+      format  = CNF,
+      names   = ["rep_"],
+      propsL  = [Transitive,Reflexive,Symmetric], 
+      propsR  = \_ -> [],
+      posR    = \n _ a1 a2 -> [[Pos ((Fun (rep n) [a1]) :=: (Fun (rep n) [a2]))]], 
+      negR    = \n _ a1 a2 -> [[Neg ((Fun (rep n) [a1]) :=: (Fun (rep n) [a2]))]],  
+      proofLR = Just $ [Pos ((Fun (rep 1) [arg1]) :=: (Fun (rep 1) [arg2]))],
+      proofRL = Just $ undefined} 
+   where rep n = (name ("rep_" ++ noClash ++ show n) ::: ([top]:-> top)) 
+  
+  
+equalification_idempotent :: String -> Transformation
+-- equalification with added idempotency axiom
+equalification_idempotent noClash = (equalification noClash) 
+        {propsR = \k -> 
+           [[Pos ((Fun (rep k) [Fun (rep k) [repx k]]) :=:  (Fun (rep k) [repx k]))  ]]}
+    where   rep n = (name ("rep_" ++ noClash ++ show n) ::: ([top]:-> top)) 
+            repx k = Fun (rep k) [varx]
+
+pequalification :: String -> Transformation
+pequalification noClash = 
+     Trans {
+         trans = PEqualify,
+         format = CNF,
+         names = ["rep_","p_"],
+         propsL = [Transitive,Symmetric], 
+         propsR = \_ -> [], 
+         posR = \n _ a1 a2 -> [[Pos ((Fun (p n) [a1]) :=: truth)], 
+                               [Pos ((Fun (p n) [a2]) :=: truth)],
+                               [Pos ((Fun (rep n) [a1]) :=: (Fun (rep n) [a2]))]], 
+         negR = \n _ a1 a2 -> [[Neg ((Fun (p n) [a1]) :=: truth), 
+                                Neg ((Fun (p n) [a2]) :=: truth),
+                                Neg ((Fun (rep n) [a1]) :=: (Fun (rep n) [a2]))]],   
+         proofLR = Nothing, 
+         proofRL = Nothing}   
+   where rep n = (name ("rep_" ++ noClash ++ show n) ::: ([top]:-> top)) 
+         p n   = (name ("p_" ++ noClash ++ show n) ::: ([top] :-> bool))
 
 
--------------------------------------------------------------------------------
-	
+transification_with_reflexivity :: String -> Transformation
+transification_with_reflexivity noClash = 
+   (transification noClash) 
+      {propsL = [Transitive,Reflexive], 
+       propsR = \k -> [Reflexive `for` (q k)],
+       posR = \k n a1 a2 -> [
+                         [Neg (qlit k (varx n) a1), 
+                         Pos (qlit k (varx n) a2) ]]
+       }
+   where q k = (name ("q_" ++ noClash ++ show k) ::: ([top,top]:-> bool))
+         qlit k a b    = (Fun (q k) [a,b] :=: truth)
+         varx n = Var (name ("X_" ++ noClash ++ show n) ::: (V top)) 
+  
+transification :: String -> Transformation
+transification noClash = 
+      Trans {
+           trans    = Transify,
+           format   = CNF,
+           names  = ["q_"],
+           propsL = [Transitive], 
+           propsR = \_ -> [], -- \k -> [Reflexive `for` (q k)], 		   
+           posR = \k n a1 a2 -> [[Pos (qlit k a1 a2)], 
+                                [Neg (qlit k (varx n) a1), 
+                                Pos (qlit k (varx n) a2) ]],
+           negR = \k n a1 a2 -> [[Neg (qlit k a1 a2)]],
+           proofLR = Just ([Pos (rlit 1 arg1 arg2)]),
+           proofRL = Just [(Neg (qlit 1 arg1 arg2))] }
+   where 
+    q k           = (name ("q_" ++ noClash ++ show k) ::: ([top,top]:-> bool))
+    r k           = (name ("r_" ++ noClash ++ show k) ::: ([top,top]:-> bool))
+    qlit k a b    = (Fun (q k) [a,b] :=: truth)
+    rlit k a b    = (Fun (r k) [a,b] :=: truth)
+    varx n = Var (name ("X_" ++ noClash ++ show n) ::: (V top)) 
 
-equalify :: (?flags :: Flags) => [Clause] -> [Clause] -> IO ClauseAnswer
-equalify theory oblig = do
- putStrLn (show oblig ++ "\n\n\n\n")	
- let 
-  tf      = (Flags.thisFile ?flags)
-  ify     = (Flags.ify ?flags)
-  outdir' = (Flags.dir ?flags)
-  outdir  = case outdir' of
-	     Nothing -> ""
-	     Just d  -> d ++ "/"
-  outfile = outdir ++(takeBaseName tf) ++ "_Negated" ++ (takeExtension tf) 
-  cs      = (theory,oblig) 
-  fs      = map toForm (theory++oblig)
-  noClash = noClashString fs  
- createDirectoryIfMissing False outdir
- let propmap  = (findEquivalenceRelations (theory++oblig))   
+
+ordification :: String -> Transformation
+ordification noClash = 
+   Trans {
+     trans   = Ordify,
+     format  = TFF,
+     names   = ["rep_"],
+     propsL  = [Total,Transitive,AntiSymmetric],
+     propsR  = \k -> [[Neg ((Fun (rep k) [varx]) :=: (Fun (rep k) [vary])),
+                      Pos (varx :=: vary)]],
+   -- injectivity of rep		   
+     posR    = \k n a1 a2 -> [[Pos ((lesseq [Fun (rep k)  [a1], 
+                              Fun (rep k) [a2]]) :=: truth)]],
+     negR    = \k n a1 a2 -> [[Neg ((lesseq [Fun (rep k)  [a1], 
+                              Fun (rep k) [a2]]) :=: truth)]],
+     proofLR = undefined,
+     proofRL = undefined}
+   where rep n = (name ("rep_" ++ noClash ++ show n) ::: ([top]:-> top)) 
+         lesseq  = Fun (( name "$lesseq" ) ::: ([top,top] :-> bool)) 
+
+arg1,arg2 :: Term
+arg1 = Var $ (name "arg1") ::: ([top] :-> top)
+arg2 = Var $ (name "arg2") ::: ([top] :-> top)
+ 
+
+for :: Property -> Symbol -> Clause
+Reflexive      `for` s  = [(Pos (Fun s [varx,varx] :=: truth))]
+Transitive     `for` s  = [Pos (Fun s [varx,varz] :=: truth), 
+                          Neg (Fun s [varx,vary] :=: truth) , 
+                          Neg (Fun s  [vary,varz] :=: truth)]
+Symmetric      `for` s  = [Pos (Fun s [varx,vary] :=: truth), 
+                          Neg (Fun s [vary,varx] :=: truth)]
+Total          `for` s  = [Pos (Fun s [varx,vary] :=: truth), 
+                          Pos (Fun s [vary,varx] :=: truth)]
+AntiSymmetric  `for` s  = [Pos (varx :=: vary), Neg (Fun s [varx,vary] :=: truth),
+                          Neg (Fun s [vary,varx] :=: truth)] 
+Functional     `for` s  = [Pos (Fun s [vary,varz] :=: truth), 
+                          Neg (Fun s [varx,vary] :=: truth) , 
+                          Neg (Fun s  [varx,varz] :=: truth)]
+Serial2        `for` s  = error "Serial2"  -- we don't know the skolem function...
+Irreflexive    `for` s  = [(Neg (Fun s [varx,varx] :=: truth))]
+Coreflexive    `for` s  = [(Neg (Fun s [varx,vary] :=: truth)), 
+                           Pos (varx :=: vary) ] 
+--StrictlyTotal `for` s = undefined (We don't deal with these)
+--StrictlyAntiSymmetric `for` s = undefined
+ 
+varx = Var  (name "X" ::: (V top)) 
+vary = Var  (name "Y" ::: (V top))
+varz = Var  (name "Z" ::: (V top))  
+  
+ ---  ******************************************************************************** --
+
+
+-- main function	
+equalify :: (?flags :: Flags) => [Clause] -> [Clause] -> [Clause] -> IO ClauseAnswer
+equalify theory hyps obligs = do
+
+  let
+    ify      = (Flags.ify ?flags)
+    tf       = (Flags.thisFile ?flags)    
+    outdir'  = (Flags.dir ?flags)
+    outdir   = case outdir' of
+                 Nothing -> "" 
+                 Just d  -> d ++ "/"
+    outfile  = outdir ++(takeBaseName tf) ++ "_" ++ show ify ++ (takeExtension tf) 
+    tobligs  = theory++hyps++obligs
+    noClash  = noClashString (map toForm tobligs)
+    propmap  = getAllProperties tobligs  -- :: [(RelationLit,[Property])]
+                                         -- All properties of relations in input clauses.
+                                         -- A symmetric property yields two entries 
+                                         -- in the table, one for each direction
+                                         -- and vice versa for pos+neg properties.   
+    transformation = (case ify of 
+      Equalify      -> equalification 
+      Equalify_Idem -> equalification_idempotent
+      Transify      -> transification 
+      Transify_Refl -> transification_with_reflexivity
+      PEqualify     -> pequalification 
+      Ordify        -> ordification 
+      _         -> error "add new transformations here!"
+      ) noClash
+    expanded = (expand (propsL transformation))
+    -- all the properties that can be removed (implied by "left-properties")		
+    relits = findApplicable propmap transformation 
+    -- The RelationLits found to have the necessary properties of the chosen transformation   
+  mapM putStrLn (map show propmap)
+  putStrLn ("\n\n" ++ show expanded)
+  putStrLn ("\n\n" ++ show relits)
+  if relits == [] then return $ NoAnswerClause NA -- No applicable relations
+   else do  
+      let 
+          wt  = transform (WTheory (map Cl theory) (map Cl hyps) (map Cl obligs)) 
+                    transformation relits noClash expanded 1 
+          ss  = transformationComment transformation relits expanded noClash 1
+      writeProblemToFile outfile wt (format transformation) ss 
+      return $ NoAnswerClause NA
     
- let 
- 
-  !(method,rels) = (case ify of
-    Flags.Equalify  -> (equalifyClauses,transformRels ify noClash 0 ((eqrels propmap)))
-    Flags.PEqualify -> (equalifyClauses,transformRels ify noClash 0 ((peqrels propmap)))
-    Flags.Transify  -> (transifyClauses, transformRels ify noClash 0 ((transrels propmap)))
-    Flags.Ordify    -> (ordify, transformRels ify noClash 0 (totalorders propmap))
-    Flags.Tordify   -> undefined ) -- (tordify, transformRels ify noClash 0 (stricttotalorders propmap))) 
-  
-  sameSign r1 r2 = case (relit r1,relit r2) of
-	 ((Rel s mb1 mb2),(Rel s2 mb1' mb2')) ->  s == s2 && mb1 == mb1' || mb1 == Nothing || mb1' == Nothing
-	
-  nubbed xs = nubBy sameSign xs -- this is OK because for equalify,pequalify, the order does not matter.
-  in                            -- for transify, ordify, tordify, the two directions should not occur in the same list in the first place.
-  do 
- -- putStrLn (show rels)
-  if rels /= [] then do 
-	  --removePropertyOr :: RelationTransformation -> Property ->  Clause -> 
-     let (cs',os) = ((transclause (head (totalorders propmap)) : 
-                 (map (map (negateIfContainsR (head (totalorders propmap)))) (concat (lefts (map (leaveOrRemoveClause (head rels)) theory))))),
-		 (map (map (negateIfContainsR (head (totalorders propmap)))) (concat (lefts (map (leaveOrRemoveClause (head rels)) oblig)))))
-    --     (es,os') = (method (map Cl cs') (nubbed rels), method (map Cl os) (nubbed rels))
-         ss = transformationComments (nubbed rels)  
---	 tffs = clauses2tff  (map toClause (filter isClause es))
---	 symbs = filter (not.isVarSymbol) $ S.toList $ symbols (cs'++os)
---	 newsymbs = [(name ("rep_" ++ noClash ++ show k) ::: ([top]:-> top)) 
---	              | k <- [0..((length (nubbed rels)) -1)]]
---	 decls = if ify == Ordify then Just (map typeDecl (symbs++newsymbs)) else Nothing
-    -- putStrLn $ show 
-     writeProblemToFile outfile Nothing (map Cl cs') (map Cl os) Equalify []	 
-      
---         ans = [(r,sum (map (hasRelitC r) cs)) | r <- totalorders propmap]
---	 ans2 = [((negr r),sum (map (hasRelitC (negr r)) cs)) | r <- totalorders propmap]
---	 ans3 = if length ans > 2 then error "?" else snd $ head ans
---	 ans4 = snd $ head ans2
- --    putStrLn $ show (map length cs)
- --    putStrLn $ show (length cs)
---     putStrLn $ show tf
---     putStrLn $ (show ans3) 
---     putStrLn $ (show ans4)
---     addToFile tf ans3 ans4
---     putStrLn $ unlines decls
---     putStrLn $ tffs
-  --   writeProblemToFile outfile decls (map Cl cs) Ordify ss  
-  --   writeProblemToFile outfile decls es ify ss  
-    else (putStrLn (show rels))
-   -- else return ()
-  
-  printPropMap propmap
-  return $ NoAnswerClause NA
-  
-transclause r =  
-  let 
-      rs = rsymbol r 
-      varx = Var (name "X" ::: (V top))
-      vary = Var (name "Y" ::: (V top))
-      varz = Var (name "Z" ::: (V top))
-  in [Neg (prd rs [varx,vary]), Neg (prd rs [vary,varz]), Pos (prd rs [varx,varz])]
-  
-  
- 	     
-addToFile tf ans1 ans2 = do
-  appendFile "statistics" (tf ++ "\n" ++ show ans1 ++ "\n" ++ show ans2 ++ "\n")
-  
-  
---printStatistics :: String -> Int -> Int
---printStatistics file tos stos = putStrLn $  
-
-printPropMap :: PropertyMap -> IO ()
-printPropMap pm = do 
-  mPutStrLn "Equivalence Relations: "  (eqrels pm)
-  mPutStrLn "Partial Equivalence Relations: " (peqrels pm)
-  mPutStrLn "Total Orders: " (totalorders pm)
-  mPutStrLn "Strict Total Orders: " (stricttotalorders pm)
-  mPutStrLn "Transitive+Reflexive: " (transrels pm)
-  mPutStrLn "All Properties: " (allproperties pm)
-  
-mPutStrLn :: (Show a) => String -> [a] -> IO () 
-mPutStrLn s1 s2 = if null s2 then return () else putStrLn $ s1 ++ show s2
-
-isClause :: ClauseOrComment -> Bool
-isClause (Cl c ) = True
-isClause _ = False
-
-toClause (Cl c) = c
- 
- 
-writeProblemToFile :: FilePath -> Maybe [String] -> ClausesOrComments -> ClausesOrComments ->  Ify -> String -> IO ()
-writeProblemToFile f decls cs obligs ify ss = 
+                       -- ***** Formatting and printing ***** --  
+    
+writeProblemToFile :: FilePath -> WorkingTheory -> Format -> String -> IO ()
+writeProblemToFile f wt fmt  ss = 
  do
    putStrLn ("Writing to file " ++ show f)
-   putStrLn (show obligs)
    h <- openFile f WriteMode
    hSetBuffering h LineBuffering
    hPutStrLn h $ ss
-   case decls of 
-	 Nothing -> return ()
-	 Just s  -> hPutStrLn h $ unlines s
-   hPutStr h (unlines $ clausesOrComments2format ify cs 1 False)
-   hPutStr h (unlines $ clausesOrComments2format ify obligs ((length cs) +1) True )
+   let 
+      format' a b = unlines.(clausesOrComments2format fmt a b)  
+      axs = axioms wt
+      hps = hyps wt
+      cjs = negconjs wt
+   hPutStr h $ format' hps 1 "hypothesis"
+   hPutStr h $ format' axs ((length hps)+1) "axiom"
+   hPutStr h $ format' cjs ((length axs + length hps) +1) "negated_conjecture" 
    hClose h
-	
-transformationComments = unlines.(map transformationComment)
-
-transformationComment :: RelationTransformation -> String
-transformationComment (Equivalence r ns) =
- -- let hs = case rsign r of 
-	  --  Just False -> "Negated"
-	  --  _          -> ""
--- in
- "%%  equivalence relation " ++ show (rsymbol r) ++
-  " replaced by rep-function " ++ (show ns)
-  
-transformationComment (PartialEquivalence r p ns) =  
- --let hs = --case rsign r of 
-	  --  Just False -> "Negated"
-	  --  _          -> ""
--- in
- "%%  partial equivalence relation " ++ show (rsymbol r) ++
-  " replaced by rep-function " ++ (show ns) ++ " and predicate " ++ show p
-  
-transformationComment t@(TransRef r ns nv) = 
---   let hs = case rsign r of
---	     Just False -> "Negated"
---	     _          -> ""
-  -- in 
-   "%%  transitive and reflexive relation " ++ show (rsymbol r) ++
-    " replaced by new relation " ++ (show ns)
-    
-transformationComment (TotalOrder r newr ord) = 
-   "%% Total order " ++ show (rsymbol r) ++ " replaced by rep function " ++ show newr
-  
-------------------------------------------------------------------------------- 
-
--- Syntactically identify what symbols represent equivalence relations or 
--- trans/reflexive relations 
--- returns:     1. equivalence relations, 
---              2. Transitive+symmetric but not reflexive relations,
---              3. Transitive+reflexive but not symmetric relations, 
---              4. total orders, 
---              5. strict total orders, 
---              6. The list of all pairs of found symbols and properties.
-findEquivalenceRelations :: [Clause] -> PropertyMap
-
-findEquivalenceRelations cs = do
-  let ss  = S.toList $ symbols cs 
-      ss' = filter isRelation ss
-      relits s = [Rel s b1 b2 | 
-                  b1 <- [Just True, Just False], b2 <- [Just True, Just False]]      
-      rls    = concatMap relits ss'
-    
-      cs'    = sortByFirst $ concatMap collectProperties cs 
-      eqrls     = filter (isEquivalenceRelation cs')  rls
-      transrels = filter (isReflTrans cs') ((rls) \\ eqrls)
-      tos       = filter (isTotalOrder cs') rls
-      stos      = filter (isStrictTotalOrder cs') rls
-      peqrls    = filter (isPartialEquivalence cs') (((rls)\\eqrls))
-      
-      cs'' = sortByFirst [ (r,prop) | (r,ps) <- cs' , prop <- allprops, hasProperty r prop cs' ]
-   
-
-  
-
-   in  PMap eqrls peqrls transrels tos stos cs''
-   
  
-allprops = [Coreflexive,Reflexive,Transitive,Symmetric,Total,Irreflexive,AntiSymmetric,
-            StrictlyTotal,StrictlyAntiSymmetric,Functional,Serial2]
+clausesOrComments2format :: Format -> ClausesOrComments -> Int -> String -> [String]
+clausesOrComments2format _ [] _ _ =  []
+clausesOrComments2format f ((Cl c):cs) n s 
+  | f == CNF = (clause2cnf  c n s) : clausesOrComments2format f cs (n+1) s
+  | f == TFF =
+      (if s == "negated_conjecture" 
+        then [clauses2tffconj [c' | Cl c' <- (Cl c:cs)] n] ++
+         ["%% " ++ s | Comment s <- cs]  
+            else   (clause2tff  c n s) : clausesOrComments2format f cs (n+1) s)
+  | otherwise = error "add new formats here"   
+  
+clausesOrComments2format f (c:cs) n  s = (show c) : (clausesOrComments2format f cs n s)
 
 
-isRelation s = isPredSymbol s && arity s == 2
+transformationComment :: Transformation -> [RelationLit] -> [(Property,Bool,Bool)] -> 
+                           String -> Int -> String
+transformationComment _ [] expanded _ _ = ""
+transformationComment tr ((Rel r b1 b2):rs) expanded noClash n = 
+   let s = if b1 ==  Just False then " negated " else " " in
+     "%% " ++ s ++ showList' (propsL tr) ++ " relation " ++ show r ++
+     " replaced by relations/functions " ++ showNames (names tr) noClash n ++ "\n" ++ 
+     " %% " ++ "   The following properties of " ++ show r ++ 
+     " can be removed: \n " ++ unwords (map (showexp b1 b2) expanded) ++  "\n" ++ 
+     transformationComment tr rs expanded noClash (n+1) ++ "\n" 
+            
+showexp b1 b2 (prop,b1',b2') = "%%      * " ++
+  (if b1 == Just b1' || b1 == Nothing then "" else " negated " ++ 
+    if b2 /= Just b2' || b2 == Nothing then "" else "flipped ") ++ show prop ++ "\n"
 
-transformRels :: Flags.Ify -> String -> Int -> [RelationLit] -> [RelationTransformation]
-transformRels ify noClash k [] = []
-transformRels ify noClash k (r:rs) = 
-	(transformRel ify noClash k r) : (transformRels ify noClash (k+1) rs)
+showNames [] _ _ = ""
+showNames [n] noClash k    = n ++ noClash ++ show k
+showNames (n:xs) noClash k = (showNames [n] noClash k) ++ ", " ++ showNames xs noClash k
 
-transformRel :: Flags.Ify -> String -> Int -> RelationLit -> RelationTransformation
-transformRel ify noClash k r@(Rel s mb1 mb2)  =   
-  let newsymbol = (name ("rep_" ++ noClash ++ show k)) ::: ([top]:-> top)
-      newp      = (name ("p" ++ noClash ++ show k)) ::: ([top]:-> top)
-      newvar    = ("X" ++ noClash ++ show k)
-      ordersymbol1 = (name "<=" ::: ([top,top]:-> bool))
-      ordersymbol2 = (name ">" :::  ([top,top]:-> bool))
+--- ************************* Transformation functions ****************************** ---
+   
+   
+transform :: WorkingTheory -> Transformation -> [RelationLit] -> String -> 
+               [(Property,Bool,Bool)]-> Int ->  WorkingTheory
+transform wt _ [] _ _ _ = wt
+transform wt tr (rel@(Rel r x y):rs) noClash exps k = 
+  let new_wt            = transform wt tr rs noClash exps (k+1) 
+      transformPart pt = transformWith tr rel pt k exps
   in
-   case ify of 
-       Flags.Equalify  -> Equivalence r newsymbol
-       Flags.PEqualify -> PartialEquivalence r newp newsymbol  
-       Flags.Transify  -> TransRef r newsymbol newvar
-       Flags.Ordify    -> TotalOrder r newsymbol ordersymbol1
-       Flags.Tordify   -> undefined --StrictTotalOrder r newsymbol ordersymbol2
+           WTheory ([Cl prop | prop <- (propsR tr) k] 
+                    ++ transformPart (axioms new_wt))
+                    (transformPart (hyps new_wt))  
+                    (transformPart (negconjs new_wt))    
 
 
-----------  "equalifying" all clauses with the given relation symbols  ----------
-
---equalifyClauses' cs rels = equalifyClauses cs (nubBy sameRel rels)
-
-equalifyClauses :: ClausesOrComments -> [RelationTransformation] -> ClausesOrComments
-equalifyClauses cs [] = cs 
-equalifyClauses cs (r:ss) = equalifyClauses cs' ss
- where cs' = (onClauses (equalifyOrRemoveClause r) cs) 
+transformWith :: Transformation -> RelationLit -> [ClauseOrComment] -> 
+                  Int -> [(Property,Bool,Bool)] -> [ClauseOrComment]
+transformWith t r cs k exps =  (concat [transformClause t r c k exps | c <- cs]) 
 
 
-onClauses :: (Clause -> Either [Clause] String) -> ClausesOrComments -> ClausesOrComments
-onClauses f [] = []
-onClauses f ((Cl c):xs) = case f c of
-                            Left c' ->(map Cl c') ++ (onClauses f xs)
-			    Right s ->  (Comment s) : (onClauses f xs)
-onClauses f ((Comment s):xs) = (Comment s) : (onClauses f xs) 
+transformClause :: Transformation -> RelationLit -> ClauseOrComment -> 
+                   Int -> [(Property,Bool,Bool)] -> [ClauseOrComment]
+transformClause _ _ (Comment comment) _ _ = [Comment comment]
+transformClause t r (Cl c) k toremove = 
+   case filter (isJust.snd) [((p,b1,b2),(withProperty p c)) | (p,b1,b2) <- toremove ] of
+        [] -> map Cl $ transformLits k 1 t r c
+        xs -> transformOrComment xs r k t c
+        --xs -> trace ("!! " ++ show c ++ "\n" ++ show xs) $ transformOrComment xs r k t c
 
 
-notInteresting :: Clause -> Bool
-notInteresting = null.collectProperties
-    
--- if the clause states that the equivalence relation rel has one of the below properties,
--- the clause is removed and replaced by a comment. Otherwise the clause is equalified
-equalifyOrRemoveClause :: RelationTransformation  -> Clause -> Either [Clause] String 
-equalifyOrRemoveClause r c = if (notInteresting c) then Left (equalifyClause r c) else 
-  removePropertyOr r Transitive c equalifyClause `mplus_` 
-  removePropertyOr r Functional c equalifyClause `mplus_` 
-  removePropertyOr r Reflexive  c equalifyClause `mplus_` 
-  removePropertyOr r Symmetric c equalifyClause
+transformOrComment [] r k t c = map Cl $ transformLits k 1 t r c
+transformOrComment (((p,b1',b2'),Just rel@(Rel _ b1'' b2'')):xs) r k t c  =
+  if (rel =*= (((if b1' then id else negaR).(if b2' then flipR else id)) r)) then
+    [Comment $ "Removed " ++ isnegatedS b1'' ++ show p ++ " axiom of " ++ show rel] 
+      else transformOrComment xs r k t c
+   where isnegatedS b = if b == Just True || b == Nothing then "" else "negated "
+   
+
+transformLits :: Int -> Int -> Transformation -> RelationLit -> Clause -> [Clause]
+transformLits _ _ _ _ [] = [[]]
+transformLits k n t r (l:ls) = 
+   let cs = transformLit k n t r l in  
+   [c ++ cc | c <- cs, cc <- transformLits k (n+1) t r ls]
+
   
+transformLit :: Int -> Int -> Transformation -> RelationLit -> Literal -> [Clause]
+transformLit k n t rel@(Rel r b1 b2) lit = 
+   if not (isInteresting lit r) then [[lit]] 
+     else 
+       let transformFun = if sameSign lit rel then (posR t) else (negR t) in
+        transformFun k n (arg 1 lit) (arg 2 lit)
+    where 
+          arg n lit = case the lit of 
+             ((Fun _ xs) :=: _)     -> xs!!(n-1)
+             _                     -> error "?"
+
+
+---- *************** Computing properties ************* ---
+
+findApplicable :: PropertyMap ->Transformation -> [RelationLit]
+findApplicable pmap t = trace (show pmap) $ (nubBy (sameR) (findApplicable' pmap t))
+  where sameR (Rel r _ _) (Rel r' _ _) = r == r'
+
+findApplicable' :: PropertyMap  -> Transformation -> [RelationLit]
+findApplicable' [] _  = []
+findApplicable' ((r,ps):pmap)  trans  
+  | and [(  ((trace ("finding applicable: ") $ hasProperty r prop ((r,ps):pmap)))) | prop <- propsL trans] = 
+         (r:(findApplicable' pmap trans))
+  | otherwise = findApplicable' pmap trans
   
-leaveOrRemoveClause :: RelationTransformation -> Clause -> Either [Clause] String
-leaveOrRemoveClause r c = if (notInteresting c) then Left [c] else 
-  removePropertyOr r Transitive c (\a -> \c -> [c]) 
-  
-mplus_ :: Either a b -> Either a b -> Either a b
-Left _  `mplus_` n = n
-Right x `mplus_` _ = Right x
-  
-removePropertyOr :: RelationTransformation -> Property ->  Clause -> 
-  (RelationTransformation  -> Clause -> [Clause]) ->  Either [Clause] String
-removePropertyOr r p c fun = case withProperty p c of
-  Just r' -> if (relit r) =*= r' then Right $ "Removed " ++ isnegatedS r' ++ (show p) ++ " axiom of " ++ show (rsymbol r')
-	       else Left $  (fun r c)
-  Nothing -> Left $  (fun r c)
-  where isnegatedS (Rel _ (Just False) _) = "negated "
-        isnegatedS _ = ""
-  
-replacePropertyOr :: RelationTransformation -> Property -> Clause -> Clause ->
-  (RelationTransformation  -> Clause -> [Clause]) ->  Either [Clause] [Clause]
-replacePropertyOr r p c newc fun = case withProperty p c of
-  Just r' -> if (relit r) =*= r' then Right [newc]
-	                           else Left $ fun r c
-  Nothing -> Left $ fun r c
+type PropertyMap = [(RelationLit,[Property])]
+type Literal     = Signed Atom   
+ 
+expand :: [Property] -> [(Property,Bool,Bool)]
+--all properties implied by list
+expand [] = []
+expand ps =  fixlist ++ computeImplications fixlist
+  where 
+      fixlist = [fix p | p <- ps]
+      fix p = case p of 
+                  Irreflexive           -> (Reflexive,False,False)
+                  StrictlyAntiSymmetric -> (Total,False,False)
+                  StrictlyTotal         -> (AntiSymmetric,False,False)
+                  _                     -> (p, True,False)
 
+computeImplications :: [(Property,Bool,Bool)] -> [(Property,Bool,Bool)]
+computeImplications props = impliedlist
+   where 
+     impliedlist        = nub [convert2prop p | (p,impls)  <- implications, 
+                                and [(elem i shownprops) | i <- impls]]
+     shownprops         = map show' props
+     show' (prop,b1,b2) = show prop ++ if not b1 then "_neg" else 
+                            "" ++ if b2 then "_flip" else ""
 
-(=*=) (Rel r mb1 mb2) (Rel r' mb1' mb2') = r == r' && (mb1 == mb1'  || mb1 == Nothing || mb1' == Nothing)
+sameSign :: Literal -> RelationLit -> Bool
+sameSign (Pos _) (Rel _ (Just b) _) = b
+sameSign (Neg _) (Rel _ (Just b) _) = not b
+sameSign l r = error (show l ++ "    " ++ show r)
 
-fromEither :: Either a a -> a
-fromEither (Left a) = a
-fromEither (Right a) = a						
-				
-{-
-			
-
-rules for equalification: 
-				
-If r is an equivalence relation	
-				
-r(X,Y) becomes rep_r(X) = rep_r(Y)
-~r(X,Y) becomes rep_r(X) != rep_r(Y)
-				
-~r equivalence relation:
-				
-r(X,Y) becomes rep_r(X) != rep_r(Y)
-~r(X,Y) becomes rep_r(X) = rep_r(Y)
-				
-If r is a partial equivalence relation:
-				
-Each occurence of r(X,Y) becomes
-				
-p(X) & p(Y) & rep(r) = rep(Y)	
-				
-so l1 | ... | ln | r(X,Y) becomes
-				
-l1 | ... | ln | r(X,Y)
-l1 | ... | ln | p(X)
-l1 | ... | ln | p(Y)	
-
-
-l1 | ... | ln | r(X,Y) | r2(Z,Y)
-
-
-l1 | ... | ln | rep(X) = rep(Y) | rep2(Z) = rep2(Y)
-l1 | ... | ln | p(X) | rep2(Z) = rep2(Y)
-l1 | ... | ln | p(Y) |rep2(Z) = rep2(Y)
-
-l1 | ... | ln | rep(X) = rep(Y) | rep2(Z) = rep2(Y)
-l1 | ... | ln | p(X) | rep2(Z) = rep2(Y)
-l1 | ... | ln | p(Y) |rep2(Z) = rep2(Y)
-
-l1 | ... | ln | rep(X) = rep(Y) | p2(Z)
-l1 | ... | ln | p(X) | p2(Z)
-l1 | ... | ln | p(Y) p2(Z)
-
-l1 | ... | ln |  rep(X) = rep(Y) | p2(Y)
-l1 | ... | ln |  p(X) | p2(Y)
-l1 | ... | ln |  p(Y) | p2(Y) 
-
-
-
-
-
-~r(X,Y) becomes
-
-~(p(X) & p(Y) & rep(r) = rep(Y)	)
-
-which is
-
-~p(X) | ~p(Y) | rep(X) != rep(Y)
-
-
-			
--}
-
-torepr (Pos t) newr = Pos (torepr' t newr)
-torepr (Neg t) newr = Neg (torepr' t newr)	
-torepr' ((Fun r [t1,t2]) :=: _) newr = (Fun newr [t1] :=: Fun newr [t2])
-
-topred :: Symbol -> Term -> Signed Atom
-topred p x = Pos (Fun p [x] :=: truth)  
-
-equalifyClause :: RelationTransformation  -> Clause -> [Clause]
-equalifyClause _  [] = [[]]
-equalifyClause r  ls = 
- case (occursR (rsymbol (relit r)) ls) of 
-   Nothing 	   -> [ls] -- no occurence of s in the clause -> no change
-   Just (t,rest)   -> 
-     let eqrest = equalifyClause r rest 
-         newr   = newsymbol r
-	 [x,y]  = case the t of
-       	           ((Fun f ts) :=: truth) -> ts		         
-                   _ -> error "?"
-     in    
-     case (rsign (relit r)) of 
-       Nothing -> error "this should not happen"
-       Just b -> let cl1 = ((if sign t == b then Pos (the (torepr t newr)) 
-	                       else Neg (the (torepr t newr)))) in
-         case r of 
-           Equivalence _ _ -> map ((:) cl1) eqrest
-           PartialEquivalence _ p _ -> 
-             if sign t == b then
-                (map ((:) cl1) eqrest) ++ 
-                (map ((:) (topred p x))  eqrest) ++
-                (map ((:) (topred p y))  eqrest) 
-               else map ((++) [negat (topred p x), negat (topred p y), Neg (the (torepr t newr))])  eqrest 
-			   
-
-occursR :: Symbol -> Clause -> Maybe (Signed Atom,Clause)
--- * picks out the first occurrence of r in the clause if there is one, and
--- * also returns the remaining clause
-occursR r [] = Nothing
-occursR r (a:ls) = case the a of
- ((Fun r' _) :=: _) ->  
-  if r == r' then Just (a,ls) else 
-   case occursR r ls of 
-     Nothing 	   -> Nothing
-     Just (a',ls') -> Just (a',a:ls') 
- _ -> Nothing
-
------------------------------------------------------------------------------------
-
--- transify relations that are transitive and reflexive
-
-transifyClauses :: ClausesOrComments
-                   -> [RelationTransformation] -> ClausesOrComments
-transifyClauses cs [] = cs 
-transifyClauses cs (r:ss) = 
-	   let cs' = (onClauses (transifyOrRemoveClause r) cs) 
-	       reflclause = let varx = makeNewVar r 0 in [Pos (prd (newsymbol r) [varx,varx])]
-           in (Cl reflclause) : (transifyClauses cs' ss)
-	   
-transifyOrRemoveClause :: RelationTransformation  -> Clause -> Either [Clause] String 
-transifyOrRemoveClause r c = -- if c == [] then error "dfgdfg" else 
-  removePropertyOr r Transitive c transifyClause `mplus_`
-  removePropertyOr r Reflexive c transifyClause
-{-  
-transifyOrReplaceClause :: RelationTransformation -> Clause -> [Clause]
-transifyOrReplaceClause _ [] = [[]]
-transifyOrReplaceClause r ls = fromEither $ replacePropertyOr r Reflexive ls reflclause transifyClause
-  where reflclause = let varx = makeNewVar r 0 in 
-                      [Pos (prd (newsymbol r) [varx,varx])]
--}
-  
- 	      
-makeNewVar r k = Var (name ((newvar r)++(show k)) ::: (V top))
-
-transifyClause :: RelationTransformation -> Clause -> [Clause]
-transifyClause _ [] = [[]]
-transifyClause r ls = [transifyLiterals r 0 ls]
-	
-transifyLiterals :: RelationTransformation -> Int -> Clause  -> Clause
-transifyLiterals _ _ [] = []
-transifyLiterals r n (l:ls) = transifyLiteral r n l ++ transifyLiterals  r (n+1) ls
-
-transifyLiteral :: RelationTransformation -> Int -> Signed Atom -> Clause
-transifyLiteral r k lit = 
- if not (isInteresting lit (rsymbol (relit r))) then [lit] else 
-   case rsign (relit r) of
-    Just b -> if sign lit /= b then  [changeSymbol lit (newsymbol r)] 
-	       else 
-		  let varx = makeNewVar r k 
-		      newlits = [negat (lit @@ varx), lit @@@ varx]
-		  in
-                    map ((flip changeSymbol) (newsymbol r)) newlits
-
-(@@) :: Signed Atom -> Term -> Signed Atom	 
-l @@ x  = case the l of
-	  (Fun f [t1,t2] :=: t)   -> toSigned (sign l) ((Fun f [x,t1]) :=: t)
-
-(@@@) :: Signed Atom -> Term -> Signed Atom	  
-l @@@ x = case the l of
-	  ((Fun f [t1,t2]) :=: t) -> toSigned (sign l) ((Fun f [x,t2]) :=: t)
-	  
-toSigned True l   = Pos l
-toSigned False l  = Neg l	 
-
-isInteresting :: Signed Atom -> Symbol	-> Bool
+isInteresting :: Signed Atom -> Symbol -> Bool
 isInteresting sa s   = case the sa of
   (Fun f ts :=: _)  -> f == s  
   _                 -> False
-	
-changeSymbol :: Signed Atom -> Symbol -> Signed Atom
-changeSymbol (Pos (Fun f ts :=: t)) s = (Pos (Fun s ts :=: t))
-changeSymbol (Neg (Fun f ts :=: t)) s = (Neg (Fun s ts :=: t))
+  
+(=*=) (Rel r mb1 mb2) (Rel r' mb1' mb2') = r == r' && (mb1 == mb1'  || mb1 == Nothing || mb1' == Nothing)
+
+    
+getAllProperties :: [Clause] -> PropertyMap -- [(RelationLit,Property)]
+getAllProperties cs = let
+      prps            = concat $ map collectProperties' cs    
+      impliedProps  =   getImpliedProps $ prps
+      in deriveFromTableRec $ sortByFirst $ prps ++ impliedProps
+      
+
+deriveFromTable :: [(RelationLit,[Property])] -> [(RelationLit,[Property])]
+deriveFromTable ps = sortByFirst [(r,p) | (r,_) <- ps, p <- allProperties,  
+                                   elem r (getRelsWithProperty ps p) ]
+
+deriveFromTableRec :: [(RelationLit,[Property])] ->  [(RelationLit,[Property])]
+deriveFromTableRec rps =  
+   let rps'  = deriveFromTable rps 
+       rps'' = sortByFirst $ getImpliedProps [(r,p) | (r,pps) <- rps', p <- pps ] ++ 
+                              [(r,p) | (r,pps) <- rps', p <- pps]
+   in
+       if (length rps == length rps'') then rps else deriveFromTableRec rps''
+       
+
+
+getRelsWithProperty :: [(RelationLit,[Property])] -> Property -> [RelationLit]
+getRelsWithProperty rps  p =  let impls = sortByFirst implications in
+                               [ r | (r,_) <- rps, (hasProperty r p rps)]
+
+
+--getImpliedProps :: [((Symbol,Int),Property)] -> [((Symbol,Int),Property)]
+getImpliedProps :: [(RelationLit,Property)] -> [(RelationLit,Property)]
+getImpliedProps prps =  [(r2,Reflexive)   
+                                  | (r, Impl r2) <- prps, elem (r,Reflexive) prps] ++
+                        [(r2,Total) 
+                                  | (r, Impl r2) <- prps, elem (r,Total) prps] ++
+                        [(r2,Serial2)      | (r, Impl r2) <- prps, elem (r,Serial2) prps] ++
+                        [(r,AntiSymmetric) 
+                                  | (r, Impl r2) <- prps, elem (r2,AntiSymmetric) prps] ++
+                        [(r, Coreflexive)  | (r, Impl r2) <- prps, elem (r2,Coreflexive) prps]  
 
  
----------------------- equalify relations that are a total order ------------------------------
-
---total,transitiv, antisymmetrisk
---(lessthan)
-
---r(X,Y) | r(Y,X)                rep(x) <= rep(y)
---r(X,Y) & r(Y,Z) => r(X,Z)      
---r(X,Y) & r(Y,X) => X = Y
-
--- Strikt total ordning:
-
---r(X,Y) | r(Y,X) | X = Y
---trans
---r(X,Y) => ~r(Y,X)
-
---(less)
-
-{-
-
-~lessthaneq <=> greaterthan
-
-
-lteq(X,Y) & lteq(Y,Z) => lteq(X,Z)
-
-gt
-
-gt(X,Y) & gt(Y,Z) => gt(X,Z)
-
-
-
-
--}
-
-tordify = undefined
---tordify :: ClausesOrComments -> [RelationTransformation] -> ClausesOrComments
---tordify cs [] = cs
---tordify cs' ss = 
-
-ordify :: ClausesOrComments -> [RelationTransformation] -> ClausesOrComments
-ordify cs [] = cs
-
-ordify cs (r1:ss) = let cs'  = (onClauses (ordifyOrRemoveClause r1) cs) in
-  ordify cs' ss
--- if relit r1 =*= relit r2 then 
-  -- let cs'  = (onClauses (ordifyOrRemoveClause r1) cs)
-    --   cs'' = (onClauses (ordifyOrRemoveClause r2) cs)
-   --in if countComments cs' > countComments cs'' then ordify cs' ss else ordify cs'' ss
-  --else  ordify (onClauses (ordifyOrRemoveClause r1) cs) (r2:ss)
-  
---ordify cs [_] = error "?"
-
---not necessary, as we know that the relevant properties of a total order are detected in both directions (<, >),
---so either relit will yield the same number of comments
---countComments [] = 0
---countComments ((Cl _):xs) = countComments xs
---countComments (_:xs) = 1+countComments xs
-
---ordify cs (r:ss) = 
--- let cs' = (onClauses (ordifyOrRemoveClause r) cs)
--- in ordify cs' ss
-
-ordifyOrRemoveClause :: RelationTransformation  -> Clause -> Either [Clause] String 
-ordifyOrRemoveClause r c = -- trace (show r) $
-  removePropertyOr r  Total c ordifyClause `mplus_`
-  removePropertyOr r  Transitive c ordifyClause `mplus_`
-  removePropertyOr r  AntiSymmetric c ordifyClause `mplus_`
-  removePropertyOr r  Reflexive c ordifyClause `mplus_`
-  removePropertyOr nr Irreflexive c ordifyClauseNeg `mplus_` 
-  removePropertyOr nr StrictlyTotal c ordifyClauseNeg `mplus_`
-  removePropertyOr nr Transitive c ordifyClauseNeg `mplus_`
-  removePropertyOr nr StrictlyAntiSymmetric c ordifyClauseNeg 
-  where nr = negateR r
-  
- {- 
-  removePropertyOr :: RelationTransformation -> Property ->  Clause -> 
-    (RelationTransformation  -> Clause -> [Clause]) ->  Either [Clause] String
-  removePropertyOr r p c fun = case withProperty p c of
-    Just r' -> if (relit r) =*= r' then Right $"Removed "  ++ (show p) ++ " axiom of " ++ show (rsymbol r')
-  	             --TODO add note about if it was negated.
-  				   else Left $  (fun r c)
-    Nothing -> Left $  (fun r c)
--}  
-negateR (TotalOrder r ns os) = (TotalOrder (negr r) ns os)
-  
-ordifyClauseNeg = ordifyClause.negateR 
-
-ordifyClause :: RelationTransformation -> Clause -> [Clause]
-ordifyClause _ [] = [[]]
-ordifyClause r ls = [ordifyLiterals r ls]
-
-ordifyLiterals :: RelationTransformation -> Clause -> Clause
-ordifyLiterals _ [] = []
-ordifyLiterals r (l:ls) = ordifyLiteral r l : ordifyLiterals r ls
-{-
-ordifyLiteral :: RelationTransformation -> Signed Atom -> Signed Atom
-ordifyLiteral r lit = 
-	if not (isInteresting lit (rsymbol (relit r))) then lit else
-	  case the lit of
-             ((Fun s ts) :=: _) -> let l =  Fun (( name "$lesseq" ) ::: ([top,top] :-> bool)) [(Fun (newsymbol r) [ts!!0]), (Fun (newsymbol r) [ts!!1])] in
-	                            if sign lit == True then Pos (l :=: truth) else Neg (l :=: truth) 
-	                           
-	     _	                -> lit 
--}
-
-ordifyLiteral :: RelationTransformation -> Signed Atom -> Signed Atom
-ordifyLiteral r lit = 
-	if not (isInteresting lit (rsymbol (relit r))) then lit else
-	  case the lit of
-             ((Fun s ts) :=: _) -> let l =  Fun (( name "$lesseq" ) ::: ([top,top] :-> bool)) [(Fun (newsymbol r) [ts!!0]), (Fun (newsymbol r) [ts!!1])] in
-	                            if sign lit == True then Pos (l :=: truth) else Neg (l :=: truth) 
-	                           
-	     _	                -> lit 
-  
- {- 
- 
- isInteresting :: Signed Atom -> Symbol -> Bool
-transifyClause :: RelationTransformation -> Clause -> [Clause]
-transifyClause _ [] = [[]]
-transifyClause r ls = [transifyLiterals r 0 ls]
-	
-transifyLiterals :: RelationTransformation -> Int -> Clause  -> Clause
-transifyLiterals _ _ [] = []
-transifyLiterals r n (l:ls) = transifyLiteral r n l ++ transifyLiterals  r (n+1) ls
-
-transifyLiteral :: RelationTransformation -> Int -> Signed Atom -> Clause
-transifyLiteral r k lit = 
- if not (isInteresting lit (rsymbol (relit r))) then [lit] else 
-   case rsign (relit r) of
-    Just b -> if sign lit /= b then  [changeSymbol lit (newsymbol r)] 
-	       else 
-		  let varx = makeNewVar r k 
-		      newlits = [negat (lit @@ varx), lit @@@ varx]
-		  in
-                    map ((flip changeSymbol) (newsymbol r)) newlits  
-  
-transifyOrReplaceClause :: RelationTransformation -> Clause -> [Clause]
-transifyOrReplaceClause _ [] = [[]]
-transifyOrReplaceClause r ls = fromEither $ replacePropertyOr r Reflexive ls reflclause transifyClause
-  where reflclause = let varx = makeNewVar r 0 in 
-                      [Pos (prd (newsymbol r) [varx,varx])]
--}
-{-
-
--- hur göra vid fler än en totala ordningar? Olika maxfunktioner?
-
-equalifyClauses3 :: [Clause] -> [Symbol] -> String -> IO [Clause]
-equalifyClauses3 cs [] _ = return cs
-equalifyClauses3 cs (s:ss) noClash = do
-  cs' <- equalifyClauses3 cs ss noClash
-  mcs <- equalifyClausesWithSymbol3 cs' s noClash
-  return $ catMaybes mcs 
-
-equalifyClausesWithSymbol3 :: [Clause] -> Symbol -> String -> IO [Maybe Clause]
-equalifyClausesWithSymbol3 [] _ _ = return []
-equalifyClausesWithSymbol3 cs r noClash = 
-  do 
-   
-    let 
-         newsymbol = case r of 
-           (n ::: t) ->  (name ("rep_" ++ noClash ++ (normalName noClash n))) ::: ([top,top]:-> bool)
-         newvar = Var ((name ("Newvar_" ++ noClash)) ::: (V top))
-    return $ map (equalifyClause3 r newsymbol newvar) cs
-
-
-maxaxioms :: String -> [Maybe Clause]
-maxaxioms noClash = [Just total,Just associative,Just commutative]
-  where
-    maxsymbol = (name ("max_" ++ noClash)) ::: ([top,top] :-> top)
-    xvar      = Var ((name "X") ::: (V top))
-    yvar      = Var ((name "Y") ::: (V top))
-    zvar      = Var ((name "Z") ::: (V top))
-    total     =  [Pos (Fun maxsymbol [xvar,yvar] :=: xvar),Pos (Fun maxsymbol [xvar,yvar] :=: yvar) ] 
-    associative = [Pos (Fun maxsymbol [xvar, Fun maxsymbol [yvar,zvar]] :=: Fun maxsymbol [Fun maxsymbol [xvar,yvar],zvar])]
-    commutative = [Pos ((Fun maxsymbol [xvar, yvar]) :=: (Fun maxsymbol [yvar,xvar]))]
-
--- 1. tag bort total, transitiv, antisymm
-equalifyClause3 :: Symbol -> Symbol -> Term -> Clause -> Maybe Clause
-equalifyClause3 r _ _ c | isTransitive c == Just r  || isTotal c == Just r || isAntiSymmetric c == Just r = Nothing                    -- remove transitivity
-
--}
-
-{-
-
-A1. total: R(x,y) | R(y,x)
-A2. transitiv: ...
-A3. anti-symmetrisk: ~R(x,y) | ~R(y,x) | x=y
-
-Då kan vi hitta på en ny funktion "max", och lägga till följande axiom:
-
-B1. "total": max(x,y)=x | max(x,y)=y
-B2. associativ: ...   max(max(x,y),z) = max(x,max(y,z))
-B3. kommutativ: ... max(x,y) = max(y,x)
-
-Dessutom:
-
-1. Vi tar bort alla axiom A1,A2,A3
-2. Vi lägger till B1, B2, B3
-3. Vi ersätter alla förekomster av R(s,t) med max(s,t)=t
-
-
-
-Om vi hittar en strikt total ordning Q, dvs:
-
-C1. strikt total: Q(x,y) | Q(y,x) | x=y
-C2. transitiv: ...
-C3. strikt anti-symmetrisk: ~Q(x,y) | ~Q(y,x)
-
-Då kan vi hitta på den ny funktion "max", och lägga till följande axiom:
-
-B1. "total": max(x,y)=x | max(x,y)=y
-B2. associativ: ...
-B3. kommutativ: ...
-
-Dessutom:
-
-1. Vi tar bort alla axiom C1,C2,C3
-2. Vi lägger till B1, B2, B3
-3. Vi ersätter alla förekomster av Q(s,t) med max(s,t)!=s
--}
-
-

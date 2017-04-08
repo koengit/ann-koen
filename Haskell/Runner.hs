@@ -43,7 +43,12 @@ import Output
 --         Main.main function not have type IO ())
 
 runner :: Tool -> ((?flags :: Flags) => [Clause] -> [Clause] -> IO ClauseAnswer) -> IO ()
-runner tool solveProblem =
+runner tool solveProblem = runner' tool solveProblem' 
+  where solveProblem' x y z = solveProblem (x++y) z
+  
+
+runner' :: Tool -> ((?flags :: Flags) => [Clause] -> [Clause] -> [Clause] -> IO ClauseAnswer) -> IO ()
+runner' tool solveProblem =
   do hSetBuffering stdout LineBuffering
      theFlags <- getFlags tool
      let ?flags = theFlags
@@ -80,7 +85,7 @@ runner tool solveProblem =
        Nothing ->
          do main' solveProblem
 
-main' :: (?flags :: Flags) => ((?flags :: Flags) => [Clause] -> [Clause] -> IO ClauseAnswer) -> IO ()
+main' :: (?flags :: Flags) => ((?flags :: Flags) => [Clause] -> [Clause] -> [Clause] -> IO ClauseAnswer) -> IO ()
 main' solveProblem =
   do require (not (null (files ?flags))) $
        putWarning "No input files specified! Try --help."
@@ -91,7 +96,7 @@ main' solveProblem =
             --putStrLn "--> inputs"
             --print (length ins, ins == ins)
             --sequence_ [ print inp | inp <- ins ]
-            let (theory,obligs) = clausify ins
+            let (theory,hyps,obligs) = clausify ins
                 n               = length obligs
             let ?flags          = ?flags{ thisFile = file }
             --sequence_ [ print t | t <- theory ]
@@ -100,12 +105,12 @@ main' solveProblem =
             case obligs of
               -- Satisfiable/Unsatisfiable
               [] ->
-                do ans <- solveProblem theory []
+                do ans <- solveProblem theory hyps []
                    putResult (show ans)
 
               -- CounterSatisfiable/Theorem
               [oblig] ->
-                do ans <- solveProblem theory oblig
+                do ans <- solveProblem theory hyps oblig
                    putResult (show (toConjectureAnswer ans))
 
               -- Unknown/Theorem
@@ -115,7 +120,7 @@ main' solveProblem =
 
                        solveAll i (oblig:obligs) =
                          do putSubHeader ("Part " ++ show i ++ "/" ++ show n)
-                            ans <- solveProblem theory oblig
+                            ans <- solveProblem theory hyps oblig
                             putOfficial ("PARTIAL (" ++ show i ++ "/" ++ show n ++ "): " ++ show (toConjectureAnswer ans))
                             case ans of
                               Unsatisfiable -> solveAll (i+1) obligs

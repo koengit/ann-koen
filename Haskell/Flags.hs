@@ -3,7 +3,7 @@ module Flags
   , Tool(..)
   , Prover(..)
   , Method(InjNotSurj,SurjNotInj,Serial,Sausage)
-  , Ify(Equalify,PEqualify,Transify,Ordify, Tordify)
+  , Ify(Equalify,PEqualify, Equalify_Idem, Transify, Transify_Refl, Ordify, Stordify,Maxify, Reflexify, TFFify)
   , getFlags
   , getTimeLeft
   , getTimeSpent
@@ -60,6 +60,7 @@ import Data.Char
 import System.CPUTime
 
 import Control.Monad.Instances()
+import Control.Applicative
 
 -------------------------------------------------------------------------
 -- flags
@@ -126,10 +127,15 @@ data Method
  
 data Ify
   =   Equalify
+    | Equalify_Idem
     | PEqualify
-    | Transify
+    | Transify -- transref
+    | Transify_Refl
     | Ordify
-    | Tordify
+    | Stordify
+    | Maxify
+    | Reflexify
+    | TFFify
  deriving (Eq, Show, Read, Bounded, Enum)
 
 data Prover = E | Equi
@@ -538,8 +544,8 @@ instance Functor (Either a) where
 unit :: a -> Arg a
 unit x = MkArg [] (\s -> Right (x,s))
 
-(<*>) :: Arg (a -> b) -> Arg a -> Arg b
-MkArg fs f <*> MkArg xs x =
+star :: Arg (a -> b) -> Arg a -> Arg b
+MkArg fs f `star` MkArg xs x =
   MkArg (fs++xs) (\s ->
     case f s of
       Left err     -> Left err
@@ -548,8 +554,11 @@ MkArg fs f <*> MkArg xs x =
                         Right (a,s'') -> Right (h a,s'')
   )
 
-(<$>) :: (a -> b) -> Arg a -> Arg b
-f <$> x = unit f <*> x
+instance Functor Arg where fmap f x = pure f <*> x
+
+instance Applicative Arg where
+  pure = unit
+  (<*>) = star
 
 args :: Arg a -> [String]
 args (MkArg as _) = as

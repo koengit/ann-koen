@@ -16,38 +16,35 @@ import Flags(Method(InjNotSurj,SurjNotInj))
 import Control.Monad.Reader
 
 continueInjOnto method funs rflag = do
-	
-		settings <- ask
-		let
-			sig'			=		sig settings
-			pflag'			=		pflag settings	
-			noClash'		=		noClash settings
-			ps				=		filter (leqfive . arity) (S.toList $ psymbs sig') 
-									--all predicates in the signature with arity <= 5
-			relations		=  	collectRelations rflag ps (hasEq sig') 
-										--relations with two or more "X"-variables, with equality if it is present.
-										--after establishing reflexivity of a relation, relations with "X" and "Y"
-										--variables will be generated.
-			subsets			=	collectSubsets pflag' ps	--collect subset-predicates depending on flag given	
-	
-		(result,refl_rels) <- tryFullDomain funs relations [] 
-								--while testing the full domain, we collect all reflexive relations to avoid
-								--testing them again!
-		case result of
-			[]	-> do
-								let testrels = deleteRels refl_rels relations 
-								(result,fsps) <- trySubdomains_Refl funs refl_rels subsets []
-								--First test the relations that are reflexive on the full domain
-								--and test the resulting candidate triples.
-								--collect matching pairs of functions and subsets to reuse in next steps
-								case result of 
-									None	-> trySubdomains fsps (nub [p | (_,p) <- fsps]) testrels testrels
-									--Next, given pairs of functions and subsets, test all other relations
-									--for reflexivity on these subsets, and test the resulting candidate triples.
-									_			-> return result
-			_		-> return $ toResult result
+   settings <- ask
+   let
+     sig'      =  sig settings
+     pflag'    =  pflag settings	
+     noClash'  =  noClash settings
+     ps	       =  filter (leqfive . arity) (S.toList $ psymbs sig')  --all predicates in the signature with arity <= 5
+     relations  =  collectRelations rflag ps (hasEq sig') 
+    --relations with two or more "X"-variables, with equality if it is present.
+    --after establishing reflexivity of a relation, relations with "X" and "Y"
+    --variables will be generated.
+     subsets    =  collectSubsets pflag' ps --collect subset-predicates depending on given flag
+   (result,refl_rels) <- tryFullDomain funs relations [] 
+                         --while testing the full domain, we collect all reflexive relations to avoid
+                         --testing them again!
+   case result of
+     []	-> do
+             let testrels = deleteRels refl_rels relations 
+             (result,fsps) <- trySubdomains_Refl funs refl_rels subsets []
+             --First test the relations that are reflexive on the full domain
+             --and test the resulting candidate triples.
+             --collect matching pairs of functions and subsets to reuse in next steps
+             case result of 
+                  None	-> trySubdomains fsps (nub [p | (_,p) <- fsps]) testrels testrels
+                        -- Next, given pairs of functions and subsets, test all other relations
+                        -- for reflexivity on these subsets, and test the resulting candidate triples.
+                  _			-> return result
+     _     -> return $ toResult result
 
-	where
+  where
 		combine xs ys = [(x,y) | x <- xs,y <- ys] 
 		tryFullDomain _ [] allrefls = return ([],allrefls)	
 		tryFullDomain funs relations refls = do

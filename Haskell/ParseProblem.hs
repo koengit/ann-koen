@@ -393,7 +393,7 @@ formula =
     [ ("axiom",              Fact)  -- ..
     , ("theorem",            Fact)  -- I see no reason to distinguish these
     , ("lemma",              Fact)  -- ..
-    , ("hypothesis",         Fact)  -- ..
+    , ("hypothesis",         Hypothesis)  -- ..
     , ("definition",         Fact)  -- TODO: treat this one specially
     , ("conjecture",         Conjecture)
     , ("question",           Conjecture)

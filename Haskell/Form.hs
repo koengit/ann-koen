@@ -696,6 +696,7 @@ instance Symbolic a => Symbolic (Bind a) where
 
 data Kind
   = Fact
+  | Hypothesis
   | NegatedConjecture
   | Conjecture
  deriving ( Eq, Ord, Show )

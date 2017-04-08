@@ -5,17 +5,26 @@ import Infinox.Conjecture
 import qualified Data.Set as S
 
 
-clauses2tff :: [Clause] -> Bool -> String
-clauses2tff cs b = clauses2tff' cs 0 b
+clauses2tff :: [Clause] -> Int -> String -> String
+
+clauses2tff cs n "negated_conjecture" = clauses2tffconj cs n
+
+--clauses2tff cs n s = clauses2tff' cs 0 b
+
+clauses2tff  [] _  _ = ""
+
+clauses2tff (x:xs) n s  = clause2tff  x n s ++ "\n" ++ clauses2tff xs  (n+1) s
 
 
-clauses2tff'  [] _  _ = ""
+clauses2tffconj :: [Clause] -> Int -> String
+clauses2tffconj cs n = "tff(" ++ "a_" ++ (show n) ++ ", " ++ "conjecture, " ++ showConj cs ++ ")."
 
-clauses2tff' (x:xs) n b  = clause2tff  x n b ++ "\n" ++ clauses2tff' xs  (n+1) b
+showConj cs =  show $ Not $ foldr1 (/\) (map toForm cs)
 
-clause2tff ::  Clause -> Int -> Bool ->  String
-clause2tff f n _ = 
-	"tff(" ++ "a_" ++ (show n) ++ "," ++ "axiom," ++ showVars f ++ showClause f ++ ")."
+
+clause2tff ::  Clause -> Int -> String ->  String
+clause2tff f n s = 
+	"tff(" ++ "a_" ++ (show n) ++ "," ++  s ++ ", " ++ showVars f ++ showClause f ++ ")."
 	
 showVars :: Clause -> String
 showVars c = let xs =  S.toList $ free c  in
@@ -30,9 +39,6 @@ showVars' (x:xs) = show x ++ ":$i, " ++ showVars' xs
 	
 --clauses2cnfs' [] n = ""
 --clauses2cnfs' (x:xs) n = clause2cnf x n ++ "\n" ++  clauses2cnfs' xs (n+1)
-
-
-
 	
 --showClause :: Clause -> String
 --showClause [] s = "$false"

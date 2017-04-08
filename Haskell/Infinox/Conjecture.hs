@@ -90,24 +90,30 @@ form2conjecture noClash n f =
 --				Left cs  -> n + length cs
 
 
-clauseOrOblig2cnf :: Clause -> Int -> Bool -> String
-clauseOrOblig2cnf c n b = if not b then clause2cnf c n else
-  clause2negconj c n
+--clauseOrOblig2cnf :: Clause -> Int -> Bool -> String
+--clauseOrOblig2cnf c n b = if not b then clause2cnf c n else
+--  clause2negconj c n
   
+clause2cnf :: Clause -> Int -> String -> String
+clause2cnf c n s =    "cnf(" ++ "a_" ++ (show n) ++ ", " ++ s ++ ", " ++ showClause c ++ ")."
+
+--clauses2cnfs :: [Clause] -> String
+--clauses2cnfs fs = clauses2cnfs' fs 0
+	
+--clauses2cnfs' [] n = ""
+--clauses2cnfs' (x:xs) n = clause2cnf x n "axiom" ++ "\n" ++  clauses2cnfs' xs (n+1)
+
+{-  
 clause2negconj :: Clause -> Int -> String
 clause2negconj c n = "cnf(" ++ "a_" ++ (show n) ++ ", " ++ "negated_conjecture, " ++ showClause c ++ ")."	
 
 			
-clauses2cnfs :: [Clause] -> String
-clauses2cnfs fs = clauses2cnfs' fs 0
-	
-clauses2cnfs' [] n = ""
-clauses2cnfs' (x:xs) n = clause2cnf x n ++ "\n" ++  clauses2cnfs' xs (n+1)
+
 
 
 clause2cnf :: Clause -> Int -> String
 clause2cnf c n = "cnf(" ++ "a_" ++ (show n) ++ ", " ++ "axiom, " ++ showClause c ++ ")."
-
+-}
 
 showNormal x f = show  $ normalBinds x $ mapOverTerms (giveNormalName x) f
 

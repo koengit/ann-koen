@@ -51,12 +51,13 @@ fixPath file = do
 
 
   
-addPath u t c s l = 
+addPath u t c s l = trace (show l) $ 
  if elem l u then "Unsatisfiable/" ++ l 
 	else if elem l t then "Theorem/" ++ l
 	  else if elem l c then "Countersatisfiable/" ++ l
             else if elem l s then "Satisfiable/" ++ l
-             else error "?"
+             else if elem l u then "Unknown/" ++ l
+              else error "?"
   
   
 findMissing = do

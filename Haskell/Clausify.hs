@@ -12,42 +12,52 @@ import Data.List( nub, maximumBy, sortBy, partition )
 import Data.Ord
 import qualified Data.Set as S
 import Flags
+import Control.Applicative
+import Control.Monad
 
 ----------------------------------------------------------------------
 -- clausify
 
-clausify :: (?flags :: Flags) => Problem -> ([Clause],[[Clause]])
-clausify inps = run $ clausifyInputs nil nil inps
+clausify :: (?flags :: Flags) => Problem -> ([Clause],[Clause],[[Clause]])
+clausify inps = run $ clausifyInputs nil nil nil inps
  where
-  clausifyInputs theory obligs [] =
+  clausifyInputs theory hyps obligs [] =
     do return ( map clean (toList theory)
+              , map clean (toList hyps)
               , map (map clean) (toList obligs)
               )
   
-  clausifyInputs theory obligs inps@(inp:_) | kind inp == NegatedConjecture =
+  clausifyInputs theory hyps obligs inps@(inp:_) | kind inp == NegatedConjecture =
     do css <- sequence [ clausForm (tag inp) (what inp) | inp <- negs ]
-       clausifyInputs theory (obligs +++ fromList [concat css]) nonNegs
+       clausifyInputs theory hyps (obligs +++ fromList [concat css]) nonNegs
    where
     (negs,nonNegs) = partition (\inp -> kind inp == NegatedConjecture) inps
 
-  clausifyInputs theory obligs (inp:inps) | kind inp /= Conjecture =
+  clausifyInputs theory hyps obligs (inp:inps) | kind inp /= Conjecture && kind inp /= Hypothesis =
     do cs <- clausForm (tag inp) (what inp)
-       clausifyInputs (theory +++ fromList cs) obligs inps
-
-  clausifyInputs theory obligs (inp:inps) =
-    do clausifyObligs theory obligs (tag inp) (split' (what inp)) inps
-
-  clausifyObligs theory obligs s [] inps =
-    do clausifyInputs theory obligs inps
+       clausifyInputs (theory +++ fromList cs) hyps obligs inps
   
-  clausifyObligs theory obligs s (a:as) inps =
+  clausifyInputs theory hyps obligs (inp:inps) | kind inp == Hypothesis = 
+    do cs <- clausForm (tag inp) (what inp)
+       clausifyInputs (theory ) (hyps+++ fromList cs) obligs inps
+
+  clausifyInputs theory hyps obligs (inp:inps) =
+    do clausifyObligs theory hyps obligs (tag inp) (split' (what inp)) inps
+
+  clausifyObligs theory hyps obligs s [] inps =
+    do clausifyInputs theory hyps obligs inps
+  
+  clausifyObligs theory hyps obligs s (a:as) inps =
     do cs <- clausForm s (nt a)
-       clausifyObligs theory (obligs +++ fromList [cs]) s as inps
+       clausifyObligs theory hyps (obligs +++ fromList [cs]) s as inps
 
   split' a | splitting ?flags = if null split_a then [true] else split_a
    where
     split_a = split a
   split' a                    = [a]
+  
+  
+
 
 clean :: Clause -> Clause
 clean cl = nub (subst sub cl)
@@ -376,6 +386,10 @@ newtype M a = M (String -> Int -> (a, Int))
 
 instance Functor M where
   fmap f (M h) = M (\s n -> let (x,n') = h s n in (f x, n'))
+
+instance Applicative M where
+  pure = return
+  (<*>) = liftM2 ($)
 
 instance Monad M where
   return x =

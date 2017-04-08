@@ -3,6 +3,7 @@ module Equalox.Main where
 --import qualified Main
 import Runner
 import Flags
+--import Equalox.Equalify
 import Equalox.Equalify
 
 
@@ -12,9 +13,9 @@ import Equalox.Equalify
 main :: IO ()
 main =
   do 
-	putStrLn "Equalox, version 1.0, 2013-06-26"
+	putStrLn "Equalox, version 1.0"
     -- Main.main Equalox equalify
-	runner Equalox equalify
-
+--	runner' Equalox equalify
+        runner' Equalox equalify
 ---------------------------------------------------------------------------
 -- the end.
