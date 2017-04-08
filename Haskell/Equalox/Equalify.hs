@@ -348,16 +348,15 @@ transformLit k n t rel@(Rel r b1 b2) lit =
 
 ---- *************** Computing properties ************* ---
 
+
 findApplicable :: PropertyMap ->Transformation -> [RelationLit]
-findApplicable pmap t = trace (show pmap) $ (nubBy (sameR) (findApplicable' pmap t))
+findApplicable pmap t = trace (show pmap) $ (nubBy (sameR) (filter (isApplicable pmap t) (map fst pmap)))
   where sameR (Rel r _ _) (Rel r' _ _) = r == r'
 
-findApplicable' :: PropertyMap  -> Transformation -> [RelationLit]
-findApplicable' [] _  = []
-findApplicable' ((r,ps):pmap)  trans  
-  | and [(  ((trace ("finding applicable: ") $ hasProperty r prop ((r,ps):pmap)))) | prop <- propsL trans] = 
-         (r:(findApplicable' pmap trans))
-  | otherwise = findApplicable' pmap trans
+isApplicable :: PropertyMap  -> Transformation -> RelationLit -> Bool
+isApplicable pmap trans r =
+  and [(  ((trace ("finding applicable: ") $ hasProperty r prop pmap))) | prop <- propsL trans]
+
   
 type PropertyMap = [(RelationLit,[Property])]
 type Literal     = Signed Atom   
